@@ -1,4 +1,5 @@
 import sys
+from array import array
 
 KEEP, DELETE, INSERT = "KEEP", "DELETE", "INSERT"
 
@@ -10,10 +11,12 @@ def myers_diff(a, b):
     """
     n, m = len(a), len(b)
     v = {1: 0}  # V[k] = furthest x reached on diagonal k; V[1] is a sentinel
-    trace = []  # trace[d] = copy of V before round d
+    trace = []  # trace[d] = compact snapshot of V before round d
 
     for d in range(n + m + 1):
-        trace.append(v.copy())
+        # Round d only reads the values round d-1 wrote: keys 1-d, 3-d, ..., d-1
+        # (just the sentinel key 1 when d == 0). Store only those, 4 bytes each.
+        trace.append(array("i", [v[k] for k in range(1 - d, max(d, 2), 2)]))
         for k in range(-d, d + 1, 2):
             if k == -d or (k != d and v[k - 1] < v[k + 1]):
                 x = v[k + 1]      # move down (INSERT)
@@ -35,13 +38,16 @@ def _backtrack(a, b, trace, d_final):
     ops = []
 
     for d in range(d_final, -1, -1):
-        v = trace[d]
+        snap = trace[d]
+        base = 1 - d  # snap[i] holds V[base + 2 * i]
         k = x - y
-        if k == -d or (k != d and v[k - 1] < v[k + 1]):
+        if k == -d or (
+            k != d and snap[(k - 1 - base) // 2] < snap[(k + 1 - base) // 2]
+        ):
             prev_k = k + 1  # arrived by moving down
         else:
             prev_k = k - 1  # arrived by moving right
-        prev_x = v[prev_k]
+        prev_x = snap[(prev_k - base) // 2]
         prev_y = prev_x - prev_k
 
         while x > prev_x and y > prev_y:  # undo the snake
