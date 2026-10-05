@@ -18,11 +18,23 @@ def read_lines(path: str) -> list[bytes]:
     return lines
 
 
-def format_lines(ops) -> bytes:
+def format_ranges(ranges: list[tuple[int, int]]) -> bytes:
+    """Format ranges as start-end,start-end (no spaces), or "." if empty.
+
+    The ranges passed in are inclusive (start, last). The official output is
+    half-open [start, end), so the printed end is last + 1.
+    """
+    if not ranges:
+        return b"."
+    return ",".join(f"{s}-{e + 1}" for s, e in ranges).encode("ascii")
+
+
+def format_lines(ops, highlight: bool = False) -> bytes:
     """Turn Myers operations into the Part A listing, as raw bytes.
 
     Inside each change block (DELETE/INSERT operations with no KEEP between
-    them) all DELETE lines come first, then all INSERT lines.
+    them) all DELETE lines come first, then all INSERT lines. With highlight,
+    the k-th INSERT is paired with the k-th DELETE and followed by a "?" line.
     """
     out = []
     pending_deletes = []
@@ -31,8 +43,13 @@ def format_lines(ops) -> bytes:
     def flush():
         for line in pending_deletes:
             out.append(b"-" + line + b"\n")
-        for line in pending_inserts:
+        for k, line in enumerate(pending_inserts):
             out.append(b"+" + line + b"\n")
+            if highlight and k < len(pending_deletes):
+                old_r, new_r = char_ranges(pending_deletes[k], line)
+                out.append(
+                    b"? " + format_ranges(old_r) + b" | " + format_ranges(new_r) + b"\n"
+                )
         pending_deletes.clear()
         pending_inserts.clear()
 
@@ -48,6 +65,42 @@ def format_lines(ops) -> bytes:
     return b"".join(out)
 
 
+def _to_ranges(indices: list[int]) -> list[tuple[int, int]]:
+    """Merge sorted indices into inclusive (start, end) ranges."""
+    ranges = []
+    for idx in indices:
+        if ranges and idx == ranges[-1][1] + 1:
+            ranges[-1] = (ranges[-1][0], idx)
+        else:
+            ranges.append((idx, idx))
+    return ranges
+
+
+def char_ranges(old: bytes, new: bytes):
+    """Minimum changed character ranges between two valid UTF-8 lines.
+
+    Characters are Unicode code points counted from 0. Returns
+    (old_ranges, new_ranges), each a list of inclusive (start, end) tuples;
+    an empty list means that side has no changed characters.
+    """
+    old_chars = list(old.decode("utf-8"))
+    new_chars = list(new.decode("utf-8"))
+    old_marked = []
+    new_marked = []
+    i = j = 0
+    for op, _ in myers_diff(old_chars, new_chars):
+        if op == DELETE:
+            old_marked.append(i)
+            i += 1
+        elif op == INSERT:
+            new_marked.append(j)
+            j += 1
+        else:  # KEEP
+            i += 1
+            j += 1
+    return _to_ranges(old_marked), _to_ranges(new_marked)
+
+
 def main() -> int:
     if len(sys.argv) != 4 or sys.argv[1] not in ("lines", "highlight"):
         print("usage: main.py lines|highlight A_PATH B_PATH", file=sys.stderr)
@@ -59,11 +112,8 @@ def main() -> int:
     except OSError as e:
         print(f"error: cannot read file: {e}", file=sys.stderr)
         return 2
-    if command == "highlight":
-        print("error: highlight is not implemented yet", file=sys.stderr)
-        return 2
     ops = myers_diff(a_lines, b_lines)
-    sys.stdout.buffer.write(format_lines(ops))
+    sys.stdout.buffer.write(format_lines(ops, highlight=(command == "highlight")))
     sys.stdout.buffer.flush()
     return 0
 
